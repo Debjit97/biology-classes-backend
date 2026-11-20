@@ -1,0 +1,24 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const service = fs.readFileSync(path.join(__dirname, '..', 'src', 'auth', 'auth.service.ts'), 'utf8');
+const strategy = fs.readFileSync(path.join(__dirname, '..', 'src', 'auth', 'jwt.strategy.ts'), 'utf8');
+const controller = fs.readFileSync(path.join(__dirname, '..', 'src', 'auth', 'auth.controller.ts'), 'utf8');
+const schema = fs.readFileSync(path.join(__dirname, '..', 'prisma', 'schema.prisma'), 'utf8');
+
+assert.match(schema, /model\s+UserSession\s*\{/);
+assert.match(schema, /refreshTokenHash\s+String\s+@unique/);
+assert.match(schema, /revokedAt\s+DateTime\?/);
+assert.match(service, /createHash\('sha256'\)/, 'Only a hash of refresh tokens should be persisted');
+assert.match(service, /randomBytes\(48\)/, 'Refresh token must have high entropy');
+assert.match(service, /refreshTokenHash:\s*nextHash/, 'Refresh token should rotate');
+assert.match(service, /AUTH_REFRESH_REUSE_DETECTED/, 'Refresh token reuse must be audited');
+assert.match(service, /AUTH_LOGOUT_ALL/, 'Logout-all must be audited');
+assert.match(service, /tokenVersion:\s*\{\s*increment:\s*1\s*\}/, 'Logout-all must invalidate outstanding access tokens');
+assert.match(strategy, /userSession\.findUnique/, 'Every access token must map to a server-side session');
+assert.match(strategy, /session\.revokedAt/, 'Revoked sessions must be rejected');
+assert.match(strategy, /session\.expiresAt\s*<=\s*new Date\(\)/, 'Expired sessions must be rejected');
+assert.match(controller, /@Post\('session\/refresh'\)/);
+assert.match(controller, /@Post\('session\/logout'\)/);
+assert.match(controller, /@Post\('session\/logout-all'\)/);
+console.log('PASS: session schema, hashed high-entropy refresh tokens, rotation, replay audit, revocation, access-token session checks and session endpoints.');

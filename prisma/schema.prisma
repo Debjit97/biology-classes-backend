@@ -1,0 +1,288 @@
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RoleName {
+  ADMIN
+  TEACHER
+  STUDENT
+}
+enum AccountStatus {
+  ACTIVE
+  PENDING
+  SUSPENDED
+  DISABLED
+}
+enum ApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+enum NotificationAudience {
+  INDIVIDUAL
+  BATCH
+  ALL_STUDENTS
+  ALL_TEACHERS
+}
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  SMS
+  PUSH
+}
+enum DeliveryStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+  READ
+}
+enum NotificationCategory {
+  CONTENT
+  PAYMENT
+  EXAMINATION
+  LIVE_CLASS
+  GENERAL
+  SYSTEM
+}
+
+model User {
+  id                 String @id @default(uuid()) @db.Uuid
+  email              String @unique
+  passwordHash       String
+  displayName        String
+  phone              String?
+  status             AccountStatus @default(PENDING)
+  emailVerifiedAt    DateTime?
+  phoneVerifiedAt    DateTime?
+  lastLoginAt        DateTime?
+  tokenVersion       Int @default(0)
+  mfaEnabled         Boolean @default(false)
+  mfaSecretEnc       String?
+  mfaPendingSecretEnc String?
+  mfaLastUsedStep    BigInt?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  sessions           UserSession[]
+  roles              UserRole[]
+  teacherProfile     TeacherProfile?
+  studentProfile     StudentProfile?
+  teacherApplication TeacherApplication?
+  teacherAssignments TeacherBatchAssignment[]
+  studentEnrolments  StudentBatchEnrollment[]
+  notificationRecipients NotificationRecipient[]
+  notificationPreferences NotificationPreference[]
+  deviceTokens       DeviceToken[]
+  auditActor         AuditLog[] @relation("AuditActor")
+  sentNotifications  Notification[] @relation("NotificationSender")
+  reviewedApplications TeacherApplication[] @relation("ApplicationReviewer")
+}
+
+model Role {
+  id String @id @default(uuid()) @db.Uuid
+  name RoleName @unique
+  userRoles UserRole[]
+}
+model UserRole {
+  userId String @db.Uuid
+  roleId String @db.Uuid
+  createdAt DateTime @default(now())
+  user User @relation(fields:[userId], references:[id], onDelete:Cascade)
+  role Role @relation(fields:[roleId], references:[id], onDelete:Restrict)
+  @@id([userId, roleId])
+  @@index([roleId])
+}
+model TeacherProfile {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @unique @db.Uuid
+  qualification String?
+  user User @relation(fields:[userId], references:[id], onDelete:Cascade)
+}
+model StudentProfile {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @unique @db.Uuid
+  guardianEmail String?
+  user User @relation(fields:[userId], references:[id], onDelete:Cascade)
+}
+model TeacherApplication {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @unique @db.Uuid
+  status ApplicationStatus @default(PENDING)
+  submittedAt DateTime @default(now())
+  reviewedAt DateTime?
+  reviewedBy String? @db.Uuid
+  reviewNote String?
+  user User @relation(fields:[userId], references:[id], onDelete:Cascade)
+  reviewer User? @relation("ApplicationReviewer", fields:[reviewedBy], references:[id], onDelete:SetNull)
+  @@index([status, submittedAt])
+}
+model Subject {
+  id String @id @default(uuid()) @db.Uuid
+  name String @unique
+  code String? @unique
+  description String?
+  isActive Boolean @default(true)
+  sortOrder Int @default(0)
+  batches Batch[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+model AcademicSession {
+  id String @id @default(uuid()) @db.Uuid
+  name String @unique
+  startsOn DateTime
+  endsOn DateTime
+  isActive Boolean @default(false)
+  batches Batch[]
+}
+model ClassLevel {
+  id String @id @default(uuid()) @db.Uuid
+  name String @unique
+  batches Batch[]
+}
+model Batch {
+  id String @id @default(uuid()) @db.Uuid
+  name String
+  subjectId String @db.Uuid
+  academicSessionId String @db.Uuid
+  classLevelId String? @db.Uuid
+  isActive Boolean @default(true)
+  subject Subject @relation(fields:[subjectId], references:[id], onDelete:Restrict)
+  academicSession AcademicSession @relation(fields:[academicSessionId], references:[id], onDelete:Restrict)
+  classLevel ClassLevel? @relation(fields:[classLevelId], references:[id], onDelete:SetNull)
+  teacherAssignments TeacherBatchAssignment[]
+  studentEnrolments StudentBatchEnrollment[]
+  notifications Notification[]
+  createdAt DateTime @default(now())
+  @@unique([name, subjectId, academicSessionId])
+  @@index([subjectId, academicSessionId])
+}
+model TeacherBatchAssignment {
+  id String @id @default(uuid()) @db.Uuid
+  teacherId String @db.Uuid
+  batchId String @db.Uuid
+  active Boolean @default(true)
+  assignedAt DateTime @default(now())
+  teacher User @relation(fields:[teacherId], references:[id], onDelete:Restrict)
+  batch Batch @relation(fields:[batchId], references:[id], onDelete:Restrict)
+  @@unique([teacherId, batchId])
+  @@index([batchId, active])
+}
+model StudentBatchEnrollment {
+  id String @id @default(uuid()) @db.Uuid
+  studentId String @db.Uuid
+  batchId String @db.Uuid
+  active Boolean @default(true)
+  enrolledAt DateTime @default(now())
+  student User @relation(fields:[studentId], references:[id], onDelete:Restrict)
+  batch Batch @relation(fields:[batchId], references:[id], onDelete:Restrict)
+  @@unique([studentId, batchId])
+  @@index([batchId, active])
+}
+model Notification {
+  id String @id @default(uuid()) @db.Uuid
+  senderId String? @db.Uuid
+  batchId String? @db.Uuid
+  category NotificationCategory @default(GENERAL)
+  audience NotificationAudience
+  subject String
+  body String
+  deepLink String?
+  scheduledAt DateTime?
+  createdAt DateTime @default(now())
+  sender User? @relation("NotificationSender", fields:[senderId], references:[id], onDelete:SetNull)
+  batch Batch? @relation(fields:[batchId], references:[id], onDelete:SetNull)
+  recipients NotificationRecipient[]
+  jobs NotificationJob[]
+  @@index([senderId, createdAt])
+  @@index([batchId, createdAt])
+}
+model NotificationRecipient {
+  id String @id @default(uuid()) @db.Uuid
+  notificationId String @db.Uuid
+  userId String @db.Uuid
+  inAppStatus DeliveryStatus @default(QUEUED)
+  readAt DateTime?
+  createdAt DateTime @default(now())
+  notification Notification @relation(fields:[notificationId], references:[id], onDelete:Cascade)
+  user User @relation(fields:[userId], references:[id], onDelete:Cascade)
+  deliveryLogs NotificationDeliveryLog[]
+  @@unique([notificationId, userId])
+  @@index([userId, inAppStatus, createdAt])
+}
+model NotificationPreference {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  channel NotificationChannel
+  category NotificationCategory
+  enabled Boolean @default(true)
+  user User @relation(fields:[userId], references:[id], onDelete:Cascade)
+  @@unique([userId, channel, category])
+}
+model DeviceToken {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  token String @unique
+  platform String
+  active Boolean @default(true)
+  lastSeenAt DateTime @default(now())
+  user User @relation(fields:[userId], references:[id], onDelete:Cascade)
+  @@index([userId, active])
+}
+model NotificationJob {
+  id String @id @default(uuid()) @db.Uuid
+  notificationId String @db.Uuid
+  channel NotificationChannel
+  status DeliveryStatus @default(QUEUED)
+  attempts Int @default(0)
+  nextAttemptAt DateTime @default(now())
+  createdAt DateTime @default(now())
+  notification Notification @relation(fields:[notificationId], references:[id], onDelete:Cascade)
+  logs NotificationDeliveryLog[]
+  @@index([status, nextAttemptAt])
+}
+model NotificationDeliveryLog {
+  id String @id @default(uuid()) @db.Uuid
+  recipientId String? @db.Uuid
+  jobId String? @db.Uuid
+  channel NotificationChannel
+  status DeliveryStatus
+  providerMessageId String?
+  failureCode String?
+  createdAt DateTime @default(now())
+  recipient NotificationRecipient? @relation(fields:[recipientId], references:[id], onDelete:SetNull)
+  job NotificationJob? @relation(fields:[jobId], references:[id], onDelete:SetNull)
+  @@index([recipientId, createdAt])
+}
+model AuditLog {
+  id String @id @default(uuid()) @db.Uuid
+  actorUserId String? @db.Uuid
+  action String
+  entityType String
+  entityId String?
+  metadata Json?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  actor User? @relation("AuditActor", fields:[actorUserId], references:[id], onDelete:SetNull)
+  @@index([actorUserId, createdAt])
+  @@index([entityType, entityId, createdAt])
+}
+
+model UserSession {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String   @db.Uuid
+  refreshTokenHash String   @unique
+  expiresAt        DateTime
+  lastUsedAt       DateTime @default(now())
+  revokedAt        DateTime?
+  createdAt        DateTime @default(now())
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt, expiresAt])
+}

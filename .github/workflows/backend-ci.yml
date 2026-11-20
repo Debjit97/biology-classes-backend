@@ -1,0 +1,79 @@
+name: Backend verification
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: biology_app
+          POSTGRES_PASSWORD: ci_test_password_only
+          POSTGRES_DB: biology_classes_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U biology_app -d biology_classes_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://biology_app:ci_test_password_only@localhost:5432/biology_classes_ci?schema=public
+      JWT_ACCESS_SECRET: ci_only_jwt_secret_at_least_32_characters_long
+      JWT_ACCESS_TTL: 15m
+      JWT_ISSUER: biology-classes-api
+      JWT_AUDIENCE: biology-classes-clients
+      MFA_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      REFRESH_SESSION_DAYS: 30
+      CORS_ORIGINS: http://localhost:3000
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Run static source audit
+        run: npm run static:audit
+
+      - name: Run MFA cryptographic tests
+        run: npm run test:mfa-crypto
+
+      - name: Run session security regression checks
+        run: npm run test:session-security
+
+      - name: Validate Prisma schema
+        run: npx prisma validate
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Generate initial migration from schema
+        run: npm run prisma:migration:initial
+
+      - name: Apply migration to disposable PostgreSQL
+        run: npx prisma migrate deploy
+
+      - name: Verify migration status
+        run: npx prisma migrate status
+
+      - name: Compile NestJS backend
+        run: npm run build
